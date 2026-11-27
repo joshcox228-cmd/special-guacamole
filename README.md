@@ -27,12 +27,29 @@ as an optional comparison (`--ml`).
 
     pip install -r requirements.txt
     python run.py signals             # what to hold now
+    python run.py portfolio           # check your own holdings against your sell rules
     python run.py backtest            # full history, chart and tables in outputs/
     python run.py backtest --offset 7 # same, rebalancing on a different day
     python run.py backtest --ml       # add the ML model for comparison (about 3 minutes)
     python -m pytest
 
 Prices come from Yahoo Finance (`query1.finance.yahoo.com`) and are cached in `data/`.
+
+## Checking your own portfolio
+
+Copy `portfolio.example.csv` to `portfolio.csv` and list your holdings with their stop
+and trim prices. `portfolio.csv` is ignored by git, so real positions are never
+committed. `python run.py portfolio` then reports, for the latest close:
+
+- **Exit**: closed below its stop.
+- **Trim**: closed at or above trim 1 or trim 2.
+- **Watch**: within 3% of the stop.
+- **Trend warning**: no rule has fired, but the holding is below its 200-day average
+  with negative 12-1 month momentum, so the momentum strategy would not own it.
+- **EMA stop**: where the stop would sit today under the 50/88/200-day EMA method
+  (1.25% under the nearest EMA below price), to show when a written stop has gone stale.
+
+It only reports. It never places trades, and thesis-break triggers are not checked.
 
 ## How it works
 

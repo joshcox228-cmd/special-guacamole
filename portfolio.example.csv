@@ -1,0 +1,7 @@
+# Copy this file to portfolio.csv and replace the rows with your own holdings.
+# portfolio.csv is ignored by git, so your real positions never leave your machine.
+# book: core or satellite. Leave stop / trim1 / trim2 blank if you have none.
+ticker,book,shares,avg_cost,stop,trim1,trim2
+SPY,core,10,600.00,560,720,780
+QQQ,core,5,520.00,480,640,
+XLE,satellite,20,95.00,88,,

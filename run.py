@@ -2,6 +2,7 @@
 """Usage:
     python run.py backtest [--refresh] [--offset N] [--ml]   replay the strategy through history
     python run.py signals [--ml]                             what to hold right now
+    python run.py portfolio [--file portfolio.csv]           check your holdings against your sell rules
 
 The main strategy is the momentum rule. --ml adds the machine-learning model
 as a comparison (slower: it retrains at every monthly rebalance).
@@ -19,9 +20,10 @@ import pandas as pd
 from marketalgo import backtest as bt
 from marketalgo import features as ft
 from marketalgo import model as ml
+from marketalgo import portfolio as pf
 from marketalgo import report
 from marketalgo.config import Config
-from marketalgo.data import load_prices
+from marketalgo.data import drop_unfinished_bar, fetch_history, load_prices
 
 OUT = Path(__file__).resolve().parent / "outputs"
 MAIN, ML = "Momentum rule top-5", "ML top-5"
@@ -140,6 +142,69 @@ def run_signals(cfg: Config, with_ml: bool) -> None:
     print(f"Saved to {path}")
 
 
+def run_portfolio(path: Path, cfg: Config) -> None:
+    if not path.exists():
+        raise SystemExit(f"{path} not found. Copy portfolio.example.csv to portfolio.csv and edit it.")
+    book = pf.load_portfolio(path)
+    start = (pd.Timestamp.today() - pd.DateOffset(years=3)).strftime("%Y-%m-%d")
+    history = {t: drop_unfinished_bar(fetch_history(t, start)) for t in [*book.index, cfg.benchmark]}
+    bench = history.pop(cfg.benchmark)["close"]
+    rep = pf.review(book, history)
+    as_of = rep["as_of"].max().date()
+
+    def pct(v, signed=True):
+        return "-" if pd.isna(v) else (f"{v:+.1%}" if signed else f"{v:.1%}")
+
+    print(f"\nPortfolio check as of the close on {as_of} (flag-only: this reports what your rules say)")
+    market_up = bench.iloc[-1] > bench.rolling(200).mean().iloc[-1]
+    print(f"Market: {cfg.benchmark} is {'above' if market_up else 'BELOW'} its 200-day average.\n")
+
+    for status, title in (("EXIT", "ACTIONS - stop breached, rule says exit fully"),
+                          ("TRIM", "ACTIONS - trim level reached"),
+                          ("NO STOP", "NEEDS A STOP"),
+                          ("WATCH", "WATCH - within 3% of the stop")):
+        rows = rep[rep["status"] == status]
+        if len(rows):
+            print(title)
+            for t, r in rows.iterrows():
+                extra = f" Suggested stop {r['ema_stop']:.2f} ({r['ema_note']})." \
+                    if status == "NO STOP" and pd.notna(r["ema_stop"]) else ""
+                print(f"  {t:<5} {r['price']:>9.2f}  {r['reason']}.{extra}")
+            print()
+    conflicts = pf.trend_conflicts(rep)
+    if len(conflicts):
+        print("TREND WARNING - no rule has fired, but below the 200-day average with negative momentum")
+        for t, r in conflicts.iterrows():
+            print(f"  {t:<5} {r['price']:>9.2f}  12-1m momentum {pct(r['momentum'])}, {r['ema_note']}")
+        print()
+    quiet = rep[(rep["status"] == "QUIET") & ~rep.index.isin(conflicts.index)]
+    print(f"QUIET ({len(quiet)}): {', '.join(quiet.index) or 'none'}\n")
+
+    table = pd.DataFrame({
+        "book": rep["book"], "status": rep["status"],
+        "price": rep["price"].map("{:.2f}".format),
+        "gain": rep["gain"].map(pct), "weight": rep["weight"].map(lambda v: pct(v, False)),
+        "stop": rep["stop"].map(lambda v: "-" if pd.isna(v) else f"{v:g}"),
+        "to stop": rep["to_stop"].map(pct),
+        "EMA stop": rep["ema_stop"].map(lambda v: "-" if pd.isna(v) else f"{v:.2f}"),
+        "uptrend": rep["uptrend"].map({True: "yes", False: "no"}),
+        "12-1m mom": rep["momentum"].map(pct),
+    }).sort_values(["book", "status"])
+    print(table.to_string())
+
+    total = rep["value"].sum()
+    sleeve = rep.loc[rep["book"] == "satellite", "value"].sum() / total
+    print(f"\nEquity value {total:,.0f}. Satellite sleeve {sleeve:.0%} of equity "
+          f"({'over' if sleeve > 0.15 else 'within'} the 15% cap; cash not included).")
+    print("EMA stop = 1.25% under the nearest of the 50/88/200-day EMAs below price. "
+          "Thesis-break triggers are not checked here.")
+
+    OUT.mkdir(exist_ok=True)
+    out = OUT / f"portfolio_{as_of}.csv"
+    rep.to_csv(out)
+    print(f"Saved to {out}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -150,12 +215,16 @@ def main() -> None:
     s = sub.add_parser("signals")
     for p in (b, s):
         p.add_argument("--ml", action="store_true", help="also run the ML model for comparison")
+    pfp = sub.add_parser("portfolio")
+    pfp.add_argument("--file", type=Path, default=Path(__file__).resolve().parent / "portfolio.csv")
     args = parser.parse_args()
 
     if args.command == "backtest":
         run_backtest(Config(offset=args.offset), args.refresh, args.random, args.ml)
-    else:
+    elif args.command == "signals":
         run_signals(Config(), args.ml)
+    else:
+        run_portfolio(args.file, Config())
 
 
 if __name__ == "__main__":
