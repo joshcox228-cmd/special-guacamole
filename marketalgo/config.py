@@ -24,10 +24,13 @@ class Config:
     start: str = "2000-01-01"
 
     horizon: int = 21            # predict the next ~1 month (trading days)
-    rebalance_every: int = 21    # trade about once a month
+    rebalance_every: int = 10    # check and trade every two weeks
     offset: int = 0              # shift the rebalance day; used for robustness checks
     top_n: int = 5               # number of positions held
     trend_filter: bool = True    # a pick below its 200-day average goes to cash instead
+    leverage: float = 2.0        # each slot is leverage / top_n of the account; above 1.0
+                                 # the account borrows once enough picks are in uptrends
+    margin_spread: float = 0.04  # yearly margin interest above the T-bill rate
 
     min_train_days: int = 756    # need ~3 years of history before the first prediction
     sample_every: int = 5        # train on weekly snapshots (daily ones overlap heavily)

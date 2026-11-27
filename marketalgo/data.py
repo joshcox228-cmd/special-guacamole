@@ -16,8 +16,10 @@ NY = ZoneInfo("America/New_York")
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
-def fetch_ticker(ticker: str, start: str, retries: int = 4) -> pd.Series:
-    """Dividend- and split-adjusted daily closes for one ticker."""
+def fetch_history(ticker: str, start: str, retries: int = 4) -> pd.DataFrame:
+    """Daily history for one ticker with two columns:
+    close = the price you actually see on a chart (split-adjusted only);
+    adj   = also adjusted for dividends, which is what returns should be measured on."""
     params = {
         "period1": int(pd.Timestamp(start, tz="UTC").timestamp()),
         "period2": int(time.time()) + 86400,
@@ -41,15 +43,20 @@ def fetch_ticker(ticker: str, start: str, retries: int = 4) -> pd.Series:
                 pd.to_datetime(result["timestamp"], unit="s", utc=True)
                 .tz_convert(NY).tz_localize(None).normalize()
             )
-            closes = pd.Series(
-                result["indicators"]["adjclose"][0]["adjclose"],
-                index=dates, name=ticker, dtype="float64",
-            ).dropna()
-            return closes[~closes.index.duplicated(keep="last")]
+            frame = pd.DataFrame({
+                "close": result["indicators"]["quote"][0]["close"],
+                "adj": result["indicators"]["adjclose"][0]["adjclose"],
+            }, index=dates, dtype="float64").dropna()
+            return frame[~frame.index.duplicated(keep="last")]
         except Exception as exc:  # network hiccup or rate limit: back off and retry
             last_error = exc
             time.sleep(2 ** attempt)
     raise RuntimeError(f"Could not download {ticker}: {last_error}")
+
+
+def fetch_ticker(ticker: str, start: str) -> pd.Series:
+    """Dividend- and split-adjusted daily closes for one ticker."""
+    return fetch_history(ticker, start)["adj"].rename(ticker)
 
 
 def drop_unfinished_bar(prices: pd.DataFrame, now: datetime | None = None) -> pd.DataFrame:
