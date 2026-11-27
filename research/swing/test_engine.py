@@ -121,3 +121,20 @@ def test_never_borrows_even_when_earlier_winners_have_grown():
     entry = flags(d, A=[0], B=[0], C=[4])                       # A quadruples before C is bought
     daily, _ = simulate(d, entry, flags(d) * 0.0, None, slots=3, weight=0.5, cost_bps=0, start=d.dates[0])
     assert daily.invested.max() <= 1.0 + 1e-9
+
+
+def test_a_stock_that_stops_trading_is_paid_out_at_its_last_price():
+    nan = float("nan")
+    close = {"A": [10, 10, 10, 12, 12, nan, nan, nan], "B": [10.0] * 8}
+    d = make({k: list(v) for k, v in close.items()}, close)
+    daily, tr = simulate(d, flags(d, A=[1]), flags(d) * 0.0, None, slots=1, cost_bps=0, start=d.dates[0])
+    assert len(tr) == 1 and tr.iloc[0].ret == pytest.approx(0.2)      # bought at 10, taken out at 12
+    assert daily.invested.iloc[-1] == 0                                # the cash is free again
+
+
+def test_a_failing_stock_gets_the_extra_haircut():
+    nan = float("nan")
+    path = [100.0] * 5 + list(np.linspace(100, 20, 130)) + [nan] * 5
+    d = make({"A": path, "B": [10.0] * len(path)}, {"A": path, "B": [10.0] * len(path)})
+    _, tr = simulate(d, flags(d, A=[0]), flags(d) * 0.0, None, slots=1, cost_bps=0, start=d.dates[0], delist_haircut=0.5)
+    assert tr.iloc[0].ret == pytest.approx(20 * 0.5 / 100 - 1)

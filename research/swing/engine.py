@@ -49,12 +49,25 @@ FUNDS = set("""ARKK KWEB FXI EWZ GDX GDXJ SLV GLD USO UNG SMH SOXX XBI IBB XOP X
 LQD EEM EFA DIA VTI VOO SPY QQQ IWM MDY SHY TLT XLK XLF XLE XLV XLY XLP XLI XLB XLU XLRE XLC""".split())
 
 
-def load(directory: Path = STOCK_DIR, clean: bool = True) -> Data:
-    frames = {f: pd.read_parquet(directory / f"{f}.parquet").astype("float64")
-              for f in ("open", "high", "low", "close", "adj", "volume")}
+def load(directory: Path = STOCK_DIR, clean: bool = True, delisted: bool = True) -> Data:
+    """Yahoo data for companies that still trade, plus (if present and wanted) the delisted
+    and dropped-from-index companies recovered from FMP by fmp_delisted.py / fmp_merge.py."""
+    fields = ("open", "high", "low", "close", "adj", "volume")
+    frames = {f: pd.read_parquet(directory / f"{f}.parquet").astype("float64") for f in fields}
+    pool = pd.read_csv(directory / "pool.csv", index_col=0)
+    accepted = directory / "fmp_accepted.csv"
+    if delisted and accepted.exists():
+        meta = pd.read_csv(accepted, index_col=0)
+        names = [c for c in meta.index if c not in frames["adj"].columns]
+        for f in fields:
+            extra = pd.read_parquet(directory / f"fmp_{f}.parquet")[names].astype("float64")
+            frames[f] = frames[f].join(extra, how="left")
+        add = pd.DataFrame({"name": meta.loc[names, "name"], "sector": "", "yahoo": "",
+                            "source": np.where(meta.loc[names, "why"] == "delisted", "delisted", "left index")}, index=names)
+        pool = pd.concat([pool, add])
+    pool = pool[~pool.index.duplicated(keep="last")]
     for f in ("open", "high", "low", "close", "adj"):
         frames[f] = frames[f].where(frames[f] > 0)
-    pool = pd.read_csv(directory / "pool.csv", index_col=0)
     data = Data(pool=pool, **frames)
     return clean_data(data) if clean else data
 
@@ -111,7 +124,8 @@ def liquid_universe(data: Data, top: int, lookback: int = 60, min_history: int =
 def simulate(data: Data, entry: pd.DataFrame, rank: pd.DataFrame, exit_: pd.DataFrame | None = None, *,
              slots: int = 10, weight: float | None = None, max_hold: int | None = None,
              mode: str = "next_open", cost_bps: float = 5.0, start: pd.Timestamp = START,
-             entry_gate: pd.Series | None = None, seed_choice: np.random.Generator | None = None):
+             entry_gate: pd.Series | None = None, seed_choice: np.random.Generator | None = None,
+             delist_haircut: float = 0.0):
     """Walk forward through history.
 
     entry / exit_ : True where a signal is seen at that day's CLOSE.
@@ -122,6 +136,10 @@ def simulate(data: Data, entry: pd.DataFrame, rank: pd.DataFrame, exit_: pd.Data
     max_hold      : sell after holding this many trading days regardless (bought at Monday's
                     open with max_hold=5 means sold at the following Monday's open).
     entry_gate    : optional per-day switch; no new positions on days it is False.
+    delist_haircut: a held stock whose data ends is sold at its last price; if it had lost
+                    more than half its value in its final six months (a failure rather than
+                    a buyout), this further fraction is taken off, since the last quoted
+                    price of a failing company usually flatters what a holder really got.
 
     Returns (daily DataFrame with ret / invested, trades DataFrame).
     Cash earns nothing here and positions never exceed the account (no borrowing).
@@ -139,6 +157,9 @@ def simulate(data: Data, entry: pd.DataFrame, rank: pd.DataFrame, exit_: pd.Data
     gate = (entry_gate.reindex(dates).fillna(False).to_numpy(dtype=bool)
             if entry_gate is not None else np.ones(len(dates), bool))
     cost = cost_bps / 1e4
+    finite = np.isfinite(C)
+    last_bar = np.where(finite.any(axis=0), len(dates) - 1 - np.argmax(finite[::-1], axis=0), -1)
+    half_year_ago = data.adj.ffill().shift(126).to_numpy()
     lag = 1 if mode == "next_open" else 0     # a sale decided tonight happens one bar later
     i0 = int(dates.searchsorted(start))
 
@@ -165,6 +186,11 @@ def simulate(data: Data, entry: pd.DataFrame, rank: pd.DataFrame, exit_: pd.Data
         cash -= value * (1 + cost)
 
     for i in range(i0, len(dates)):
+        for j in [j for j in held if i > last_bar[j]]:           # stopped trading: paid out
+            k = last_bar[j]
+            failed = np.isfinite(half_year_ago[k, j]) and C[k, j] < 0.5 * half_year_ago[k, j]
+            close_position(j, C[k, j] * (1 - delist_haircut if failed else 1.0), i)
+            pend_out = [x for x in pend_out if x != j]
         if mode == "next_open":
             still = []
             for j in pend_out:                 # sell first, at today's open
