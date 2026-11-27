@@ -26,7 +26,7 @@ from marketalgo.config import Config
 from marketalgo.data import drop_unfinished_bar, fetch_history, load_prices
 
 OUT = Path(__file__).resolve().parent / "outputs"
-MAIN, ML = "Momentum rule top-5", "ML top-5"
+MAIN, ML = "Core + momentum rule", "ML top-5"
 
 
 def prepare(cfg: Config, refresh: bool):
@@ -54,7 +54,7 @@ def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> No
     momentum = momentum_scores(wide, signal_dates)
     eligible = momentum.notna()
     trend_ok = (wide["dist_sma200"] > 0).loc[signal_dates]
-    equal_cfg = replace(cfg, top_n=len(cfg.universe), trend_filter=False, leverage=1.0)
+    equal_cfg = replace(cfg, top_n=len(cfg.universe), trend_filter=False, leverage=1.0, core_weight=0.0)
 
     results = {MAIN: bt.simulate(prices, bt.weights_from_scores(momentum, trend_ok, cfg), cfg)}
     index = results[MAIN].index
@@ -137,9 +137,13 @@ def run_signals(cfg: Config, with_ml: bool, account: float | None) -> None:
     borrowed = max(-weights[cfg.cash], 0.0)
     if borrowed:
         print(f"Borrowed on margin: {borrowed:.0%} of the account.")
-    print(f"Rule: top {cfg.top_n} by 12-1 month momentum, {cfg.leverage / cfg.top_n:.0%} of the account "
-          f"each ({cfg.leverage:g}x leverage); a pick below its 200-day average gets nothing, "
-          f"and spare money sits in {cfg.cash}.")
+    rule_share = 1 - cfg.core_weight
+    if cfg.core_weight:
+        print(f"Core: {cfg.core_weight:.0%} of the account is always in {cfg.core}. "
+              f"The rule runs the other {rule_share:.0%}.")
+    print(f"Rule: top {cfg.top_n} by 12-1 month momentum, {cfg.leverage / cfg.top_n * rule_share:.0%} of the "
+          f"account each ({cfg.leverage:g}x leverage on the rule's share); a pick below its 200-day "
+          f"average gets nothing, and spare money sits in {cfg.cash}.")
 
     if account:
         last = prices.loc[today]

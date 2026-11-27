@@ -15,13 +15,19 @@ def target_weights(scores: pd.Series, trend_ok: pd.Series, cfg: Config) -> pd.Se
 
     Each slot is leverage / top_n of the account. Whatever is left sits in the cash
     fund. If the slots add up to more than the account, the cash weight goes negative:
-    that is money borrowed on margin."""
+    that is money borrowed on margin.
+
+    With a core holding, all of the above is scaled down to the rule's share of the
+    account and the core fund is added on top."""
     weights = pd.Series(0.0, index=list(cfg.tickers))
     slot = cfg.leverage / cfg.top_n
     for ticker in scores.dropna().nlargest(cfg.top_n).index:
         if not cfg.trend_filter or bool(trend_ok.get(ticker, False)):
             weights[ticker] += slot
     weights[cfg.cash] += 1.0 - weights.sum()
+    if cfg.core_weight:  # the rule only runs its share; the core is held regardless
+        weights *= 1.0 - cfg.core_weight
+        weights[cfg.core] += cfg.core_weight
     return weights
 
 

@@ -11,7 +11,7 @@ from marketalgo.config import Config
 
 CFG = Config(universe=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF"), cash="CASH",
              benchmark="AAA", top_n=2, min_train_days=300, leverage=1.0,
-             rebalance_every=21)
+             rebalance_every=21, core_weight=0.0)
 
 
 @pytest.fixture(scope="module")
@@ -62,6 +62,16 @@ def test_leverage_scales_slots_and_borrows_only_when_needed():
     assert one_up["AAA"] == 1.0 and one_up["CASH"] == 0.0          # fully invested, no loan
     both_up = bt.target_weights(scores, pd.Series({"AAA": True, "BBB": True}), lev)
     assert both_up["AAA"] == 1.0 and both_up["BBB"] == 1.0 and both_up["CASH"] == -1.0
+
+
+def test_core_holding_is_always_held_and_rule_runs_the_rest():
+    cfg = Config(**{**CFG.__dict__, "leverage": 2.0, "core": "FFF", "core_weight": 0.5})
+    scores = pd.Series({"AAA": 0.9, "BBB": 0.8, "CCC": 0.1})
+    none_up = bt.target_weights(scores, pd.Series({"AAA": False, "BBB": False}), cfg)
+    assert none_up["FFF"] == 0.5 and none_up["CASH"] == 0.5        # core stays even with no picks
+    both_up = bt.target_weights(scores, pd.Series({"AAA": True, "BBB": True}), cfg)
+    assert both_up["AAA"] == 0.5 and both_up["BBB"] == 0.5 and both_up["FFF"] == 0.5
+    assert both_up["CASH"] == -0.5 and both_up.sum() == pytest.approx(1.0)
 
 
 def test_margin_loan_costs_interest(prices):

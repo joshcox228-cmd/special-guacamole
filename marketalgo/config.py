@@ -31,6 +31,8 @@ class Config:
     leverage: float = 2.0        # each slot is leverage / top_n of the account; above 1.0
                                  # the account borrows once enough picks are in uptrends
     margin_spread: float = 0.04  # yearly margin interest above the T-bill rate
+    core: str = "SPY"            # fund that is always held, whatever the rule says
+    core_weight: float = 0.5     # share of the account in the core; the rule runs the rest
 
     min_train_days: int = 756    # need ~3 years of history before the first prediction
     sample_every: int = 5        # train on weekly snapshots (daily ones overlap heavily)
@@ -40,5 +42,5 @@ class Config:
 
     @property
     def tickers(self) -> tuple:
-        extra = [t for t in (self.cash, self.benchmark) if t not in self.universe]
+        extra = [t for t in dict.fromkeys((self.cash, self.benchmark, self.core)) if t not in self.universe]
         return tuple(self.universe) + tuple(extra)

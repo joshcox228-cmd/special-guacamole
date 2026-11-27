@@ -1,42 +1,46 @@
-# Market strategy: ETF momentum with a trend filter
+# Market strategy: S&P 500 core plus ETF momentum
 
-The main strategy is a simple rule, checked every 10 trading days (two weeks):
+Half the account is always held in SPY. The other half is run by a momentum rule,
+checked every 10 trading days (two weeks):
 
 1. Rank 22 liquid ETFs by their return from 12 months ago to 1 month ago.
 2. Take the top 5. Each one that is above its 200-day average gets a slot.
 3. A pick below its 200-day average gets nothing.
 4. Spare money sits in SHY (short-term Treasuries).
 
-The default settings use **2x leverage**: each slot is 40% of the account instead
-of 20%. With one or two picks in uptrends nothing is borrowed; with three or more the
-account borrows on margin, up to 100% of its value when all five qualify. Set
-`leverage = 1.0` in `marketalgo/config.py` for no borrowing.
+The rule's half uses **2x leverage**: each slot is 20% of the whole account. With up
+to two picks in uptrends nothing is borrowed; with all five the account borrows 50%
+of its value. Settings (`core_weight`, `leverage`) are in `marketalgo/config.py`.
 
-A machine-learning model was tested first and lost to this rule, so it is kept only
-as an optional comparison (`--ml`).
+A machine-learning model was tested first and lost to the momentum rule, so it is
+kept only as an optional comparison (`--ml`).
 
 ## Backtest, 2003-01 to 2026-11
 
-After 5 bps per trade and margin interest of 4% a year above the T-bill rate.
-Averaged over five different starting days, rebalancing every 10 trading days:
+After 5 bps per trade and margin interest of 4% a year above the T-bill rate,
+averaged over five starting days. Return per year, by period:
 
-| Leverage | Return / yr | Sharpe | Worst drawdown | Worst month | Worst year |
-|---|---|---|---|---|---|
-| 1x (no borrowing) | 9.9% | 0.75 | -21% | -10% | -6% |
-| 1.5x | 11.6% | 0.63 | -31% | -15% | -12% |
-| 2x (default) | 12.6% | 0.56 | -41% | -21% | -18% |
-| SPY buy & hold | 10.9% | 0.65 | -55% | -17% | |
+| Strategy | 2003-2014 | 2015-2026 | Whole period | Worst drawdown |
+|---|---|---|---|---|
+| Half SPY + half rule at 2x (default) | 14.7% | 10.5% | 12.6% | -39% |
+| Rule only, 2x | 18.2% | 7.4% | 12.6% | -41% |
+| Rule only, no borrowing | 12.8% | 7.0% | 9.9% | -21% |
+| SPY buy & hold | 10.0% | 12.9% | 11.4% | -55% |
 
-- Leverage raises return, but losses grow faster than gains: 2x adds under 3 points
-  of yearly return over 1x and roughly doubles the worst drawdown.
-- At 2x the account was borrowing about 90% of the time, and the worst two-week
-  stretch lost 29%.
-- The 2x rule beat 90% of 200 random-pick portfolios run under the same rules.
-  Encouraging, but short of the usual 95% bar for "not luck".
-- Rebalancing monthly instead earned slightly more (10.4% at 1x) with a deeper worst
-  drawdown (-27%). Weekly earned slightly less (9.6%) with more than twice the trading.
-- A real margin rate above the assumed one makes the leveraged rows worse. Taxes are
-  not included, and trading this often creates short-term gains.
+What this shows:
+
+- **The momentum rule's edge came from 2003-2014.** It avoided most of 2008 and rode
+  the commodities boom. Since 2015, holding SPY has beaten it by about 5 points a year,
+  because recent sell-offs were short and the rule missed the rebounds.
+- **Since 2015, leverage on the rule added almost nothing** (7.4% against 7.0%) while
+  doubling the worst drawdown.
+- **The SPY core is a hedge against that**, giving up some of the first period for a
+  better second. It was chosen after seeing these results, so it is a judgment call,
+  not a proven improvement.
+- Nothing tested here reliably beats SPY. Three refinements (blended momentum
+  look-backs, volatility-sized slots, and both) did not help in both periods.
+- A real margin rate above the assumed one makes leveraged rows worse. Taxes are not
+  included, and trading this often creates short-term gains.
 
 ## Use
 
