@@ -178,6 +178,8 @@ def run_signals(cfg: Config, with_ml: bool, account: float | None, holdings: dic
           f"{'CHANGED' if core_changed else 'no change'}")
     print(f"   = {mcfg.index} {cfg.core_weight * parts['index']:.1%}, {mcfg.fund2x} {cfg.core_weight * parts['fund2x']:.1%}, "
           f"cash {cfg.core_weight * parts['cash']:.1%} of the account")
+    recent = path["exposure"].iloc[-6:]
+    print("   Last trading days: " + ", ".join(f"{d:%b %d} {e:.2f}x" for d, e in recent.items()))
 
     shown = table.head(8).copy()
     for col in ("12-1m momentum", "vs 200d avg"):
