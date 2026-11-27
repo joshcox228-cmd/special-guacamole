@@ -35,7 +35,7 @@ def _style(ax):
     ax.tick_params(colors=MUTED, length=0, labelsize=9)
 
 
-def plot(results: dict[str, pd.DataFrame], path: Path) -> None:
+def plot(results: dict[str, pd.DataFrame], path: Path, main: str) -> None:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -46,7 +46,7 @@ def plot(results: dict[str, pd.DataFrame], path: Path) -> None:
 
     ends = []
     for name, res in results.items():
-        emphasis = name == "ML top-5"
+        emphasis = name == main
         top.plot(res.index, res["equity"], color=COLORS[name], label=name,
                  linewidth=2.2 if emphasis else 1.6, zorder=3 if emphasis else 2)
         ends.append((res["equity"].iloc[-1], name))
@@ -71,7 +71,7 @@ def plot(results: dict[str, pd.DataFrame], path: Path) -> None:
         top.annotate(f"${value:.2f}  {name.split()[0]}", xy=(last, np.exp(y)), xytext=(6, 0),
                      textcoords="offset points", va="center", fontsize=9, color=INK)
 
-    for name in ("SPY buy & hold", "ML top-5"):
+    for name in ("SPY buy & hold", main):
         eq = results[name]["equity"]
         bottom.plot(eq.index, eq / eq.cummax() - 1, color=COLORS[name], linewidth=1.5, label=name)
     bottom.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.0%}"))

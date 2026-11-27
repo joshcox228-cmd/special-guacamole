@@ -1,49 +1,48 @@
-# Market strategy: ML ranking of ETFs, tested honestly
+# Market strategy: ETF momentum with a trend filter
 
-A machine-learning model that ranks 22 liquid ETFs by expected performance over the
-next month, holds the top 5, and is replayed through 2003-2026 with trading costs.
+The main strategy is a simple rule: each month, rank 22 liquid ETFs by their return
+from 12 months ago to 1 month ago, hold the top 5 at 20% each, and replace any pick
+trading below its 200-day average with cash (SHY).
 
-## Result so far: the ML model does not beat a simple rule
+A machine-learning model was tested first and lost to this rule, so it is kept only
+as an optional comparison (`--ml`).
 
-Out-of-sample, after 5 bps per trade, 2003-01 to 2026-11:
+## Backtest, 2003-01 to 2026-11, after 5 bps per trade
 
 | Strategy | Return / yr | Sharpe | Worst drawdown |
 |---|---|---|---|
-| ML top-5 | 7.8% | 0.61 | -31% |
 | Momentum rule top-5 | 10.9% | 0.79 | -27% |
+| ML top-5 (comparison) | 7.4% | 0.58 | -31% |
 | Equal weight, all 22 ETFs | 9.3% | 0.70 | -44% |
 | SPY buy & hold | 10.9% | 0.65 | -55% |
 
-- The ML portfolio beat only 18% of 200 random-pick portfolios run under the same rules.
-- Shifting the rebalance day by 7 and 14 trading days gave ML Sharpe 0.55 and 0.66,
-  against 0.70 and 0.75 for the momentum rule. Same conclusion each time.
-- The model's forecasts do correlate slightly with outcomes (rank IC about +0.04 to
-  +0.06), but that was not enough to pick a better top 5 than plain momentum.
-
-Do not trade the ML signal on this evidence. The momentum rule is the stronger candidate,
-and most of its benefit is smaller drawdowns than SPY, not higher return.
+- The momentum rule matched SPY's return with about half the worst drawdown.
+- It beat 86% of 200 random-pick portfolios run under the same rules. That is
+  encouraging but short of the usual 95% bar for "not luck".
+- Shifting the rebalance day by 7 and 14 trading days gave Sharpe 0.70 and 0.75,
+  so the result depends somewhat on which day of the month you trade.
+- The edge is in risk, not return: expect to lag SPY in strong bull markets.
 
 ## Use
 
     pip install -r requirements.txt
+    python run.py signals             # what to hold now
     python run.py backtest            # full history, chart and tables in outputs/
     python run.py backtest --offset 7 # same, rebalancing on a different day
-    python run.py signals             # today's ranking and target weights
+    python run.py backtest --ml       # add the ML model for comparison (about 3 minutes)
     python -m pytest
 
 Prices come from Yahoo Finance (`query1.finance.yahoo.com`) and are cached in `data/`.
 
 ## How it works
 
-1. **Features** (`marketalgo/features.py`): momentum over 1-12 months, volatility,
-   distance from 50/200-day averages, drawdown, RSI, each asset's rank within the
-   universe, and three market-wide readings from SPY.
-2. **Label**: each asset's rank among the others over the following 21 trading days.
-3. **Model** (`marketalgo/model.py`): a small, heavily regularised LightGBM model,
-   retrained at every monthly rebalance using only outcomes already known by then.
-4. **Portfolio** (`marketalgo/backtest.py`): equal weight in the top 5 scores. A pick
-   trading below its 200-day average is replaced by cash (SHY). Signals use today's
-   close and trade at the next close.
+1. **Features** (`marketalgo/features.py`): momentum, volatility, trend and relative
+   rank for each ETF. The momentum rule uses two of them: 12-1 month momentum and
+   distance from the 200-day average. The ML model uses all of them.
+2. **Portfolio** (`marketalgo/backtest.py`): equal weight in the top 5 scores, with the
+   trend filter. Signals use today's close and trade at the next close.
+3. **ML comparison** (`marketalgo/model.py`): a small LightGBM model, retrained at
+   every monthly rebalance using only outcomes already known by then.
 
 Settings are in `marketalgo/config.py`.
 
