@@ -83,6 +83,28 @@ is below 10, until the first close above its 5-day average.
 Borrowing through a margin loan instead of SSO lowered the managed result from 13.6% to
 12.2% a year. Checking daily, every few days or weekly made little difference (13.1% to 13.6%).
 
+## Small companies: insider buying and earnings surprises (2016-07 to 2026-11)
+
+The 500 biggest stocks are crowded with professional money, so two ideas were tested where
+large funds struggle to trade: companies ranked 501-2500 by trading volume (about 1,900
+stocks a day, at least $2M traded daily). Data: 7,773 companies including 2,606 that were
+delisted, 139,000 insider purchase filings by officers and directors, and 81,000 earnings
+reports. Rules were fixed in advance; 20 positions, 20 bps cost per trade.
+
+| | A year | 2016-21 | 2021-26 | Worst drop |
+|---|---|---|---|---|
+| S&P 500 (SPY) | 14.5% | 17.7% | 11.8% | -34% |
+| All small stocks on the list, equal amounts | 10.6% | 18.8% | 3.6% | -46% |
+| Buy after a strong earnings beat, hold 60 days | 5.4% | 11.3% | 0.7% | -46% |
+| Two or more insiders buying $100k+ within 30 days, hold 120 days | 4.9% | 10.8% | -0.1% | -58% |
+| One insider buying $250k or more, hold 120 days | 12.7% | 19.1% | 7.4% | -60% |
+
+- **Earnings surprises: no edge.** The stocks did no better than other small stocks afterwards.
+- **Large insider purchases: a small real edge against other small stocks**, about 0.5%
+  in the first week and 3.4% over a year (statistically solid, and present in both halves).
+- **It still loses to the S&P 500**, because small stocks as a group trailed the S&P 500
+  by about four points a year over this decade and fell further in every sell-off.
+
 ## Limits
 
 - Stock results before 2020 are still flattered, because many companies that vanished
@@ -110,6 +132,10 @@ Borrowing through a margin loan instead of SSO lowered the managed result from 1
     python side_tests.py                 # overnight effect, sector rotation
     python leverage_tests.py             # cost of leveraged funds, managed exposure since 1960
     python final_table2.py               # whole-portfolio comparison
+    python brainstorm_qqq.py             # the managed approach on the Nasdaq-100
+    python macd_setup.py                 # a MACD / moving-average / RSI setup, last five years
+    FMP_API_KEY=... python smallcap_data.py   # small-company prices, insider purchases, earnings
+    python smallcap_study.py             # insider buying and earnings surprises in small companies
     python -m pytest -q                  # simulator checks
 
 The FMP API key is read from the environment and is never stored in this repository.
