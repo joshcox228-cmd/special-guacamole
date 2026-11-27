@@ -80,3 +80,16 @@ def load_prices(tickers, start: str, refresh: bool = False) -> pd.DataFrame:
     CACHE.parent.mkdir(parents=True, exist_ok=True)
     prices.to_parquet(CACHE)
     return prices
+
+
+BILL_CACHE = CACHE.parent / "bill_rate.parquet"
+
+
+def load_bill_rate(refresh: bool = False) -> pd.Series:
+    """13-week Treasury bill yield as a yearly fraction (0.04 = 4%), used for cash and borrowing costs."""
+    if BILL_CACHE.exists() and not refresh:
+        return pd.read_parquet(BILL_CACHE)["rate"]
+    rate = fetch_history("^IRX", "2000-01-01")["close"] / 100
+    BILL_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    rate.to_frame("rate").to_parquet(BILL_CACHE)
+    return rate

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Usage:
+    python run.py signals [--account N] [--holdings "SPY:8,XLE:61"] [--cash N] [--side "QQQ:3"]
+                                          what to hold right now, and the trades to get there
     python run.py backtest [--refresh] [--offset N] [--ml]   replay the strategy through history
-    python run.py signals [--ml]                             what to hold right now
-    python run.py portfolio [--file portfolio.csv]           check your holdings against your sell rules
+    python run.py portfolio [--file portfolio.csv]           check holdings against written sell rules
 
-The main strategy is the momentum rule. --ml adds the machine-learning model
-as a comparison (slower: it retrains at every monthly rebalance).
+The portfolio has two halves: S&P 500 exposure managed by volatility, and a fund-rotation
+(momentum) rule. --ml adds the machine-learning model as a comparison (slow).
 """
 
 from __future__ import annotations
@@ -19,14 +20,17 @@ import pandas as pd
 
 from marketalgo import backtest as bt
 from marketalgo import features as ft
+from marketalgo import managed as mg
 from marketalgo import model as ml
+from marketalgo import plan
 from marketalgo import portfolio as pf
 from marketalgo import report
 from marketalgo.config import Config
-from marketalgo.data import drop_unfinished_bar, fetch_history, load_prices
+from marketalgo.data import drop_unfinished_bar, fetch_history, load_bill_rate, load_prices
 
 OUT = Path(__file__).resolve().parent / "outputs"
-MAIN, ML = "Core + momentum rule", "ML top-5"
+MAIN, ML = "Managed S&P + fund rule", "ML top-5"
+PLAIN, RULE = "Plain S&P + fund rule", "Fund rule alone"
 
 
 def prepare(cfg: Config, refresh: bool):
@@ -45,8 +49,20 @@ def ic_line(name: str, ic: pd.Series) -> str:
             f"right direction in {(ic > 0).mean():.0%} of months")
 
 
+def blend(core: pd.Series, rule: pd.DataFrame, share: float, core_turnover: pd.Series | None = None) -> pd.DataFrame:
+    """Two halves held side by side and kept at their shares of the account."""
+    core = core.reindex(rule.index).fillna(0.0)
+    ret = share * core + (1 - share) * rule["ret"]
+    turnover = (1 - share) * rule["turnover"]
+    if core_turnover is not None:
+        turnover = turnover + share * core_turnover.reindex(rule.index).fillna(0.0)
+    return pd.DataFrame({"ret": ret, "turnover": turnover, "equity": (1 + ret).cumprod()})
+
+
 def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> None:
     prices, wide = prepare(cfg, refresh)
+    mcfg = mg.ManagedConfig()
+    rule_cfg = replace(cfg, core_weight=0.0)
     fwd = ft.forward_returns(prices, cfg)
     signal_dates = prices.index[ml.rebalance_positions(len(prices), cfg)]
     print(f"Prices: {prices.index[0].date()} to {prices.index[-1].date()}, {len(cfg.universe)} ETFs.")
@@ -54,34 +70,42 @@ def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> No
     momentum = momentum_scores(wide, signal_dates)
     eligible = momentum.notna()
     trend_ok = (wide["dist_sma200"] > 0).loc[signal_dates]
-    equal_cfg = replace(cfg, top_n=len(cfg.universe), trend_filter=False, leverage=1.0, core_weight=0.0)
+    equal_cfg = replace(rule_cfg, top_n=len(cfg.universe), trend_filter=False, leverage=1.0)
 
-    results = {MAIN: bt.simulate(prices, bt.weights_from_scores(momentum, trend_ok, cfg), cfg)}
-    index = results[MAIN].index
+    rule = bt.simulate(prices, bt.weights_from_scores(momentum, trend_ok, rule_cfg), rule_cfg)
+    index = rule.index
+    managed = mg.backtest(prices[cfg.core], load_bill_rate(refresh), mcfg)
+    plain = prices[cfg.core].pct_change(fill_method=None)
+    results = {
+        MAIN: blend(managed["ret"], rule, cfg.core_weight, managed["exposure"].diff().abs()),
+        PLAIN: blend(plain, rule, cfg.core_weight),
+        RULE: rule,
+    }
     ic_lines = [ic_line("Momentum rule", bt.information_coefficient(momentum, fwd))]
     if with_ml:
         print("Training walk-forward ML models...")
         scores = ml.walk_forward(ft.to_long(wide), ft.build_labels(fwd), cfg, progress=True)
-        results[ML] = bt.simulate(prices, bt.weights_from_scores(scores, trend_ok, cfg), cfg)
+        results[ML] = bt.simulate(prices, bt.weights_from_scores(scores, trend_ok, rule_cfg), rule_cfg)
         ic_lines.append(ic_line("ML model", bt.information_coefficient(scores, fwd)))
     results["Equal weight (all ETFs)"] = bt.simulate(
         prices, bt.weights_from_scores(eligible.astype(float).where(eligible), trend_ok, equal_cfg),
-        equal_cfg)
+        equal_cfg).reindex(index)
     results["SPY buy & hold"] = bt.buy_and_hold(prices, cfg.benchmark, index)
 
-    print(f"\nPeriod: {index[0].date()} to {index[-1].date()} "
-          f"({len(signal_dates)} rebalances, one every {cfg.rebalance_every} trading days; "
-          f"{cfg.leverage:g}x leverage; {cfg.cost_bps:g} bps cost per trade)\n")
+    print(f"\nPeriod: {index[0].date()} to {index[-1].date()}. Fund rule: {len(signal_dates)} reviews, one every "
+          f"{cfg.rebalance_every} trading days, {cfg.leverage:g}x on margin, {cfg.cost_bps:g} bps per trade.\n"
+          f"Managed S&P: target swing {mcfg.target_vol:.0%} a year, cap {mcfg.cap:g}x, dip boost {mcfg.dip_boost:g}x, "
+          f"average exposure {managed['exposure'].reindex(index).mean():.2f}x.\n")
     table = report.metrics_table({k: bt.metrics(v) for k, v in results.items()})
     print(table)
 
-    lines = ["", "Does the ranking predict? (rank correlation of score vs. next month)", *ic_lines]
+    lines = ["", "Does the fund ranking predict? (rank correlation of score vs. next month)", *ic_lines]
     if n_random:
-        sharpes = bt.random_pick_sharpes(prices, eligible, trend_ok, cfg, n_random)
-        lines += ["", f"Versus {n_random} random-pick portfolios under identical rules:",
+        sharpes = bt.random_pick_sharpes(prices, eligible, trend_ok, rule_cfg, n_random)
+        lines += ["", f"Fund rule versus {n_random} random-pick portfolios under identical rules:",
                   f"  random Sharpe: median {np.median(sharpes):.2f}, 5th-95th percentile "
                   f"{np.percentile(sharpes, 5):.2f} to {np.percentile(sharpes, 95):.2f}"]
-        for name in (MAIN, ML):
+        for name in (RULE, ML):
             if name in results:
                 mine = bt.metrics(results[name])["Sharpe"]
                 lines.append(f"  {name}: Sharpe {mine:.2f} beats {(sharpes < mine).mean():.0%} of them")
@@ -91,75 +115,125 @@ def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> No
     suffix = f"_offset{cfg.offset}" if cfg.offset else ""
     (OUT / f"backtest_summary{suffix}.txt").write_text(table + "\n" + "\n".join(lines) + "\n")
     pd.DataFrame({k: v["equity"] for k, v in results.items()}).to_csv(OUT / f"equity{suffix}.csv")
-    report.plot(results, OUT / f"equity_curve{suffix}.png", main=MAIN)
+    charted = {k: v for k, v in results.items() if k in report.COLORS}
+    report.plot(charted, OUT / f"equity_curve{suffix}.png", main=MAIN)
     print(f"\nSaved chart and tables to {OUT}/")
 
 
-def run_signals(cfg: Config, with_ml: bool, account: float | None) -> None:
+def parse_positions(text: str | None) -> dict[str, float]:
+    """'SPY:8, XLE:61' -> {'SPY': 8.0, 'XLE': 61.0}"""
+    out = {}
+    for item in (text or "").replace(";", ",").split(","):
+        if item.strip():
+            ticker, _, shares = item.strip().partition(":")
+            out[ticker.strip().upper()] = float(shares)
+    return out
+
+
+def latest_price(ticker: str) -> float:
+    start = (pd.Timestamp.today() - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+    return float(drop_unfinished_bar(fetch_history(ticker, start))["close"].iloc[-1])
+
+
+def run_signals(cfg: Config, with_ml: bool, account: float | None, holdings: dict[str, float],
+                cash: float | None, side: dict[str, float]) -> None:
     prices, wide = prepare(cfg, refresh=True)
-    today = prices.index[-1]
+    mcfg = mg.ManagedConfig()
+    rule_cfg = replace(cfg, core_weight=0.0)
+    today, previous = prices.index[-1], prices.index[-2]
+
+    # ---- S&P 500 half
+    path = mg.exposure_path(prices[cfg.core], mcfg)
+    now, before = path.iloc[-1], path.iloc[-2]
+    core_changed = abs(now["exposure"] - before["exposure"]) > 1e-9
+    parts = mg.split(now["exposure"])
+
+    # ---- fund-rule half
     momentum = wide["mom_12_1"].loc[today].dropna()
     trend_ok = wide["dist_sma200"].loc[today] > 0
-    weights = bt.target_weights(momentum, trend_ok, cfg)
-
+    rule_weights = bt.target_weights(momentum, trend_ok, rule_cfg)
+    review = plan.review_due(today, previous, pd.Timestamp(cfg.review_anchor))
     table = pd.DataFrame({
         "12-1m momentum": momentum,
         "vs 200d avg": wide["dist_sma200"].loc[today].reindex(momentum.index),
         "uptrend": trend_ok.reindex(momentum.index).map({True: "yes", False: "no"}),
-        "target weight": weights.reindex(momentum.index),
+        "share of account": (rule_weights * (1 - cfg.core_weight)).reindex(momentum.index),
     }).sort_values("12-1m momentum", ascending=False)
     table.insert(0, "rank", range(1, len(table) + 1))
-
     if with_ml:
         features = ft.to_long(wide)
         labels = ft.build_labels(ft.forward_returns(prices, cfg)).stack()
         labels.index.names = ["date", "ticker"]
-        pos = len(prices) - 1
-        model = ml.fit(features, labels, ml.training_rows(prices.index, pos, cfg), cfg)
-        scores = ml.predict(model, features, today)
-        table["ML score"] = scores.reindex(table.index)
-        table["ML weight"] = bt.target_weights(scores, trend_ok, cfg).reindex(table.index)
+        model = ml.fit(features, labels, ml.training_rows(prices.index, len(prices) - 1, cfg), cfg)
+        table["ML score"] = ml.predict(model, features, today).reindex(table.index)
 
-    shown = table.copy()
+    weights = plan.account_weights(rule_weights, now["exposure"], cfg, mcfg)
+
+    print(f"\nPLAN CHECK as of the close on {today.date()}")
+    print(f"\n1) S&P 500 half ({cfg.core_weight:.0%} of the account)")
+    print(f"   Market swings over the last {mcfg.lookback} days: {now['vol']:.1%} a year (target {mcfg.target_vol:.0%}) "
+          f"-> the rule calls for {now['wanted']:.2f}x; holding {now['base']:.2f}x")
+    print(f"   Dip-buying boost: {'ON (+%.1fx)' % mcfg.dip_boost if now['dip'] else 'off'}")
+    print(f"   Exposure now {now['exposure']:.2f}x; previous day {before['exposure']:.2f}x -> "
+          f"{'CHANGED' if core_changed else 'no change'}")
+    print(f"   = {mcfg.index} {cfg.core_weight * parts['index']:.1%}, {mcfg.fund2x} {cfg.core_weight * parts['fund2x']:.1%}, "
+          f"cash {cfg.core_weight * parts['cash']:.1%} of the account")
+
+    shown = table.head(8).copy()
     for col in ("12-1m momentum", "vs 200d avg"):
         shown[col] = shown[col].map("{:+.1%}".format)
-    for col in ("target weight", "ML weight"):
-        if col in shown:
-            shown[col] = shown[col].map(lambda w: f"{w:.0%}" if w else "-")
+    shown["share of account"] = shown["share of account"].map(lambda w: f"{w:.0%}" if w else "-")
     if "ML score" in shown:
         shown["ML score"] = shown["ML score"].map("{:+.3f}".format)
+    print(f"\n2) Fund-rule half ({1 - cfg.core_weight:.0%} of the account), reviewed every two weeks "
+          f"-> review {'DUE TODAY' if review else 'not due today'}")
+    print("   " + shown.to_string().replace("\n", "\n   "))
 
-    print(f"\nMomentum-rule signals as of the close on {today.date()} "
-          f"(act at the next close, re-check in {cfg.rebalance_every} trading days)\n")
-    print(shown.to_string())
-    holdings = weights[weights > 0]
-    print("\nTarget portfolio: " + ", ".join(f"{t} {w:.0%}" for t, w in holdings.items()))
-    borrowed = max(-weights[cfg.cash], 0.0)
-    if borrowed:
-        print(f"Borrowed on margin: {borrowed:.0%} of the account.")
-    rule_share = 1 - cfg.core_weight
-    if cfg.core_weight:
-        print(f"Core: {cfg.core_weight:.0%} of the account is always in {cfg.core}. "
-              f"The rule runs the other {rule_share:.0%}.")
-    print(f"Rule: top {cfg.top_n} by 12-1 month momentum, {cfg.leverage / cfg.top_n * rule_share:.0%} of the "
-          f"account each ({cfg.leverage:g}x leverage on the rule's share); a pick below its 200-day "
-          f"average gets nothing, and spare money sits in {cfg.cash}.")
+    held = {t: w for t, w in weights.items() if t != cfg.cash and abs(w) > 1e-9}
+    cash_w = weights[cfg.cash]
+    print("\nWhole-account targets: " + ", ".join(f"{t} {w:.1%}" for t, w in held.items())
+          + (f", cash {cash_w:.1%}" if cash_w >= 0 else f", BORROWED {-cash_w:.1%}"))
 
+    # ---- orders
+    core_funds = {mcfg.index, mcfg.fund2x}
+    tickers = sorted(set(held) | set(holdings) | set(side) | core_funds)
+    px = pd.Series({t: (float(prices[t].iloc[-1]) if t in prices.columns else latest_price(t)) for t in tickers})
+    side_value = sum(px[t] * n for t, n in side.items())
+    if holdings or cash is not None:
+        account = sum(px[t] * n for t, n in holdings.items()) + side_value + (cash or 0.0)
+    acting = core_changed or review
     if account:
-        last = prices.loc[today]
-        print(f"\nOrders for a {account:,.0f} account at the {today.date()} closing prices:")
-        spent = 0.0
-        for ticker, w in holdings.items():
-            shares = int(account * w // last[ticker])
-            spent += shares * last[ticker]
-            print(f"  {ticker:<4} {shares:>4} shares at about {last[ticker]:.2f} = {shares * last[ticker]:>9,.0f}")
-        left = account - spent
-        print(f"  {'Cash left' if left >= 0 else 'Borrowed'}: {abs(left):,.0f}")
+        frozen: set[str] = set()
+        if holdings:
+            have = plan.core_exposure_held(holdings, px, account, cfg, mcfg)
+            in_band = abs(have - now["exposure"]) <= mcfg.band
+            print(f"\nS&P half held now: {have:.2f}x against a target of {now['exposure']:.2f}x -> "
+                  f"{'close enough, leave it' if in_band else 'ADJUST'}")
+            if in_band:
+                frozen |= core_funds
+            if not review:                       # fund-rule positions only change on review days
+                frozen |= {t for t in tickers if t not in core_funds}
+        book = plan.orders(weights, px, account, holdings, cash_ticker=cfg.cash, frozen=frozen)
+        book = book[(book["target"] > 0) | (book["held"] > 0)]
+        print(f"\nAccount {account:,.0f}" + (f" (includes side bets left alone: "
+              f"{', '.join(f'{t} {n:g}' for t, n in side.items())}, worth {side_value:,.0f})" if side else ""))
+        out = pd.DataFrame({"price": book["price"].map("{:,.2f}".format), "target shares": book["target"].astype(int),
+                            "held": book["held"].map("{:g}".format),
+                            "TRADE": book["trade"].map(lambda v: "-" if v == 0 else f"{'BUY' if v > 0 else 'SELL'} {abs(v):g}"),
+                            "value after": book["value"].map("{:,.0f}".format)})
+        print(out.to_string())
+        left = account - side_value - book["value"].sum()
+        print(f"   {'Cash after trades' if left >= 0 else 'BORROWED after trades'}: {abs(left):,.0f}")
+        if holdings:
+            acting = bool((book["trade"] != 0).any())
+    print(f"\nACTION NEEDED: {'YES' if acting else 'no'}"
+          + ("" if holdings else "  (based on changes since the previous day; pass --holdings for exact trades)"))
+    print("S&P-half changes apply on any day; fund-rule changes only on review days.")
 
     OUT.mkdir(exist_ok=True)
-    path = OUT / f"signals_{today.date()}.csv"
-    table.to_csv(path)
-    print(f"Saved to {path}")
+    out_path = OUT / f"signals_{today.date()}.csv"
+    table.to_csv(out_path)
+    print(f"Saved to {out_path}")
 
 
 def run_portfolio(path: Path, cfg: Config) -> None:
@@ -234,6 +308,9 @@ def main() -> None:
     b.add_argument("--random", type=int, default=200, help="random portfolios to compare against")
     s = sub.add_parser("signals")
     s.add_argument("--account", type=float, help="account value, to print share counts")
+    s.add_argument("--holdings", help='plan holdings as "SPY:8,XLE:61,XLB:73"; gives exact trades')
+    s.add_argument("--cash", type=float, help="cash balance (negative if borrowed), used with --holdings")
+    s.add_argument("--side", help='positions held outside the plan, e.g. "QQQ:3"; they are left alone')
     for p in (b, s):
         p.add_argument("--ml", action="store_true", help="also run the ML model for comparison")
     pfp = sub.add_parser("portfolio")
@@ -243,7 +320,8 @@ def main() -> None:
     if args.command == "backtest":
         run_backtest(Config(offset=args.offset), args.refresh, args.random, args.ml)
     elif args.command == "signals":
-        run_signals(Config(), args.ml, args.account)
+        run_signals(Config(), args.ml, args.account, parse_positions(args.holdings), args.cash,
+                    parse_positions(args.side))
     else:
         run_portfolio(args.file, Config())
 

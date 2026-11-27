@@ -31,8 +31,11 @@ class Config:
     leverage: float = 2.0        # each slot is leverage / top_n of the account; above 1.0
                                  # the account borrows once enough picks are in uptrends
     margin_spread: float = 0.04  # yearly margin interest above the T-bill rate
-    core: str = "SPY"            # fund that is always held, whatever the rule says
-    core_weight: float = 0.5     # share of the account in the core; the rule runs the rest
+    core: str = "SPY"            # S&P 500 fund for the core half
+    core_weight: float = 0.5     # share of the account in the core; the fund rule runs the rest
+    core_mode: str = "managed"   # "managed": S&P exposure follows volatility (managed.py);
+                                 # "plain": the core fund is simply held
+    review_anchor: str = "2026-12-11"   # the fund rule is reviewed on this date and every 14 days after
 
     min_train_days: int = 756    # need ~3 years of history before the first prediction
     sample_every: int = 5        # train on weekly snapshots (daily ones overlap heavily)

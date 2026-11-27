@@ -1,59 +1,62 @@
-# Market strategy: S&P 500 core plus ETF momentum
+# Market strategy: managed S&P 500 exposure plus fund momentum
 
-Half the account is always held in SPY. The other half is run by a momentum rule,
-checked every 10 trading days (two weeks):
+The account is run in two halves.
+
+**S&P 500 half, managed by volatility.** Hold more of the S&P 500 when the market is calm
+and less when it is wild:
+
+    exposure = 20% / (annualised volatility of the last 20 days), capped at 2x
+
+Exposure up to 1x is held in SPY; anything above 1x is held through the 2x fund SSO, so
+there is no margin loan. Changes smaller than 0.1x are ignored. A **dip boost** adds 0.5x
+for a few days after a sharp drop while the S&P 500 is above its 200-day average.
+
+**Fund-rule half, reviewed every two weeks.**
 
 1. Rank 22 liquid ETFs by their return from 12 months ago to 1 month ago.
-2. Take the top 5. Each one that is above its 200-day average gets a slot.
-3. A pick below its 200-day average gets nothing.
-4. Spare money sits in SHY (short-term Treasuries).
-
-The rule's half uses **2x leverage**: each slot is 20% of the whole account. With up
-to two picks in uptrends nothing is borrowed; with all five the account borrows 50%
-of its value. Settings (`core_weight`, `leverage`) are in `marketalgo/config.py`.
-
-A machine-learning model was tested first and lost to the momentum rule, so it is
-kept only as an optional comparison (`--ml`).
+2. Take the top 5. Each one that is above its 200-day average gets 20% of the account.
+3. A pick below its 200-day average gets nothing; spare money stays in cash.
+4. With three or more picks this half borrows on margin (2x on its own share).
 
 ## Backtest, 2003-01 to 2026-11
 
-After 5 bps per trade and margin interest of 4% a year above the T-bill rate,
-averaged over five starting days. Return per year, by period:
+After trading costs, margin interest of 4% a year above T-bills on the fund rule, and the
+measured cost of the 2x fund (about 1.8% above T-bills) on the S&P half. Averaged over
+several starting days. Return per year, by period:
 
-| Strategy | 2003-2014 | 2015-2026 | Whole period | Worst drawdown |
+| Portfolio | 2003-2014 | 2015-2026 | Whole period | Worst drawdown |
 |---|---|---|---|---|
-| Half SPY + half rule at 2x (default) | 14.7% | 10.5% | 12.6% | -39% |
-| Rule only, 2x | 18.2% | 7.4% | 12.6% | -41% |
-| Rule only, no borrowing | 12.8% | 7.0% | 9.9% | -21% |
-| SPY buy & hold | 10.0% | 12.9% | 11.4% | -55% |
+| Managed S&P + fund rule (this portfolio) | 16.6% | 11.6% | 14.1% | -31% |
+| Plain S&P + fund rule (previous version) | 14.9% | 10.6% | 12.8% | -38% |
+| Managed S&P only | 13.8% | 15.2% | 14.5% | -46% |
+| Fund rule only, 2x | 18.3% | 7.6% | 12.8% | -37% |
+| SPY buy & hold | 9.9% | 12.9% | 11.4% | -55% |
 
-What this shows:
+What this shows, and what it does not:
 
-- **The momentum rule's edge came from 2003-2014.** It avoided most of 2008 and rode
-  the commodities boom. Since 2015, holding SPY has beaten it by about 5 points a year,
-  because recent sell-offs were short and the rule missed the rebounds.
-- **Since 2015, leverage on the rule added almost nothing** (7.4% against 7.0%) while
-  doubling the worst drawdown.
-- **The SPY core is a hedge against that**, giving up some of the first period for a
-  better second. It was chosen after seeing these results, so it is a judgment call,
-  not a proven improvement.
-- Nothing tested here reliably beats SPY. Three refinements (blended momentum
-  look-backs, volatility-sized slots, and both) did not help in both periods.
-- A real margin rate above the assumed one makes leveraged rows worse. Taxes are not
-  included, and trading this often creates short-term gains.
+- Managing the S&P half improved on simply holding SPY in every window tested, including
+  the S&P 500 index back to 1960 (about one point a year more, similar worst drop).
+- The fund rule's edge came from 2003-2014. Since 2015 it has trailed SPY. It is kept as
+  a second engine that behaved very differently in 2008, not because it has beaten the
+  market recently.
+- A dozen stock-picking and short-term trading ideas were tested and none beat SPY since
+  2015 once delisted companies were included. See `research/swing/README.md`.
+- These are historical results chosen after testing many alternatives, so expect less.
+  Taxes are not included, and frequent adjustments create short-term gains.
 
 ## Use
 
     pip install -r requirements.txt
-    python run.py signals             # what to hold now
-    python run.py signals --account 13000   # same, with share counts for that account size
-    python run.py portfolio           # check your own holdings against your sell rules
-    python run.py backtest            # full history, chart and tables in outputs/
-    python run.py backtest --offset 7 # same, rebalancing on a different day
-    python run.py backtest --ml       # add the ML model for comparison (about 3 minutes)
+    python run.py signals                                   # targets for both halves
+    python run.py signals --holdings "SPY:8,XLE:61,XLB:73" --cash 3700 --side "QQQ:3"
+                                                            # exact trades from what you hold
+    python run.py backtest                                  # full history, chart and tables in outputs/
+    python run.py backtest --ml                             # add the ML model for comparison
+    python run.py portfolio                                 # check holdings against written sell rules
     python -m pytest
 
-Prices come from Yahoo Finance (`query1.finance.yahoo.com`) and are cached in `data/`.
+`--side` lists positions held outside the plan; they are left alone and paid for out of
+the plan's spare cash. Prices come from Yahoo Finance and are cached in `data/`.
 
 ## Checking your own portfolio
 
@@ -73,15 +76,15 @@ It only reports. It never places trades, and thesis-break triggers are not check
 
 ## How it works
 
-1. **Features** (`marketalgo/features.py`): momentum, volatility, trend and relative
-   rank for each ETF. The momentum rule uses two of them: 12-1 month momentum and
-   distance from the 200-day average. The ML model uses all of them.
-2. **Portfolio** (`marketalgo/backtest.py`): equal slots in the top 5 scores, with the
-   trend filter and leverage. Signals use today's close and trade at the next close.
-3. **ML comparison** (`marketalgo/model.py`): a small LightGBM model, retrained at
-   every monthly rebalance using only outcomes already known by then.
+- `marketalgo/managed.py`: the S&P 500 half (volatility-managed exposure and dip boost).
+- `marketalgo/features.py`, `marketalgo/backtest.py`: the fund rule and its simulator.
+- `marketalgo/plan.py`: combines both halves into whole-account targets and orders. The
+  S&P half is adjusted on any day its exposure is off by more than 0.1x; fund positions
+  only change on review days.
+- `marketalgo/model.py`: the ML model that was tested first and lost to the fund rule.
+- `research/swing/`: the stock and swing-trading research behind the current design.
 
-Settings are in `marketalgo/config.py`.
+Settings are in `marketalgo/config.py` and `marketalgo/managed.py`.
 
 ## Limits of the backtest
 
