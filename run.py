@@ -54,7 +54,7 @@ def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> No
     momentum = momentum_scores(wide, signal_dates)
     eligible = momentum.notna()
     trend_ok = (wide["dist_sma200"] > 0).loc[signal_dates]
-    equal_cfg = replace(cfg, top_n=len(cfg.universe), trend_filter=False)
+    equal_cfg = replace(cfg, top_n=len(cfg.universe), trend_filter=False, leverage=1.0)
 
     results = {MAIN: bt.simulate(prices, bt.weights_from_scores(momentum, trend_ok, cfg), cfg)}
     index = results[MAIN].index
@@ -70,7 +70,8 @@ def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> No
     results["SPY buy & hold"] = bt.buy_and_hold(prices, cfg.benchmark, index)
 
     print(f"\nPeriod: {index[0].date()} to {index[-1].date()} "
-          f"({len(signal_dates)} monthly rebalances, {cfg.cost_bps:g} bps cost per trade)\n")
+          f"({len(signal_dates)} rebalances, one every {cfg.rebalance_every} trading days; "
+          f"{cfg.leverage:g}x leverage; {cfg.cost_bps:g} bps cost per trade)\n")
     table = report.metrics_table({k: bt.metrics(v) for k, v in results.items()})
     print(table)
 
@@ -94,7 +95,7 @@ def run_backtest(cfg: Config, refresh: bool, n_random: int, with_ml: bool) -> No
     print(f"\nSaved chart and tables to {OUT}/")
 
 
-def run_signals(cfg: Config, with_ml: bool) -> None:
+def run_signals(cfg: Config, with_ml: bool, account: float | None) -> None:
     prices, wide = prepare(cfg, refresh=True)
     today = prices.index[-1]
     momentum = wide["mom_12_1"].loc[today].dropna()
@@ -129,12 +130,27 @@ def run_signals(cfg: Config, with_ml: bool) -> None:
         shown["ML score"] = shown["ML score"].map("{:+.3f}".format)
 
     print(f"\nMomentum-rule signals as of the close on {today.date()} "
-          f"(act at the next close, re-check in about a month)\n")
+          f"(act at the next close, re-check in {cfg.rebalance_every} trading days)\n")
     print(shown.to_string())
     holdings = weights[weights > 0]
     print("\nTarget portfolio: " + ", ".join(f"{t} {w:.0%}" for t, w in holdings.items()))
-    print(f"Rule: top {cfg.top_n} by 12-1 month momentum, {1 / cfg.top_n:.0%} each; "
-          f"a pick below its 200-day average is held as {cfg.cash} (cash) instead.")
+    borrowed = max(-weights[cfg.cash], 0.0)
+    if borrowed:
+        print(f"Borrowed on margin: {borrowed:.0%} of the account.")
+    print(f"Rule: top {cfg.top_n} by 12-1 month momentum, {cfg.leverage / cfg.top_n:.0%} of the account "
+          f"each ({cfg.leverage:g}x leverage); a pick below its 200-day average gets nothing, "
+          f"and spare money sits in {cfg.cash}.")
+
+    if account:
+        last = prices.loc[today]
+        print(f"\nOrders for a {account:,.0f} account at the {today.date()} closing prices:")
+        spent = 0.0
+        for ticker, w in holdings.items():
+            shares = int(account * w // last[ticker])
+            spent += shares * last[ticker]
+            print(f"  {ticker:<4} {shares:>4} shares at about {last[ticker]:.2f} = {shares * last[ticker]:>9,.0f}")
+        left = account - spent
+        print(f"  {'Cash left' if left >= 0 else 'Borrowed'}: {abs(left):,.0f}")
 
     OUT.mkdir(exist_ok=True)
     path = OUT / f"signals_{today.date()}.csv"
@@ -213,6 +229,7 @@ def main() -> None:
     b.add_argument("--offset", type=int, default=0, help="shift the rebalance day by N trading days")
     b.add_argument("--random", type=int, default=200, help="random portfolios to compare against")
     s = sub.add_parser("signals")
+    s.add_argument("--account", type=float, help="account value, to print share counts")
     for p in (b, s):
         p.add_argument("--ml", action="store_true", help="also run the ML model for comparison")
     pfp = sub.add_parser("portfolio")
@@ -222,7 +239,7 @@ def main() -> None:
     if args.command == "backtest":
         run_backtest(Config(offset=args.offset), args.refresh, args.random, args.ml)
     elif args.command == "signals":
-        run_signals(Config(), args.ml)
+        run_signals(Config(), args.ml, args.account)
     else:
         run_portfolio(args.file, Config())
 

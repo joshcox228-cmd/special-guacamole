@@ -11,16 +11,17 @@ TRADING_DAYS = 252
 
 
 def target_weights(scores: pd.Series, trend_ok: pd.Series, cfg: Config) -> pd.Series:
-    """Equal weight in the top-N scores; a pick in a downtrend is swapped for cash."""
+    """Equal slots in the top-N scores; a pick in a downtrend gets nothing.
+
+    Each slot is leverage / top_n of the account. Whatever is left sits in the cash
+    fund. If the slots add up to more than the account, the cash weight goes negative:
+    that is money borrowed on margin."""
     weights = pd.Series(0.0, index=list(cfg.tickers))
-    picks = scores.dropna().nlargest(cfg.top_n).index
-    slot = 1.0 / cfg.top_n
-    for ticker in picks:
-        if cfg.trend_filter and not bool(trend_ok.get(ticker, False)):
-            weights[cfg.cash] += slot
-        else:
+    slot = cfg.leverage / cfg.top_n
+    for ticker in scores.dropna().nlargest(cfg.top_n).index:
+        if not cfg.trend_filter or bool(trend_ok.get(ticker, False)):
             weights[ticker] += slot
-    weights[cfg.cash] += 1.0 - weights.sum()  # fewer than N eligible assets
+    weights[cfg.cash] += 1.0 - weights.sum()
     return weights
 
 
@@ -37,11 +38,14 @@ def simulate(prices: pd.DataFrame, targets: pd.DataFrame, cfg: Config) -> pd.Dat
     dates = prices.index
     trade_at = {dates.get_loc(d) + cfg.exec_lag: targets.loc[d].to_numpy() for d in targets.index}
     first = min(trade_at)
+    cash = cols.index(cfg.cash)
 
     w = np.zeros(len(cols))
     daily, turnover = [], []
     for i in range(first, len(dates)):
-        gross = float(w @ rets[i])
+        # A negative cash weight is a margin loan: it costs the cash fund's return
+        # (about the T-bill rate) through the line below, plus the broker's spread.
+        gross = float(w @ rets[i]) - max(-w[cash], 0.0) * cfg.margin_spread / TRADING_DAYS
         if w.sum() > 0:
             w = w * (1 + rets[i]) / (1 + gross)  # holdings drift with prices
         traded = 0.0

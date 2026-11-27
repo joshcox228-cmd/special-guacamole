@@ -10,7 +10,8 @@ from marketalgo import model as ml
 from marketalgo.config import Config
 
 CFG = Config(universe=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF"), cash="CASH",
-             benchmark="AAA", top_n=2, min_train_days=300)
+             benchmark="AAA", top_n=2, min_train_days=300, leverage=1.0,
+             rebalance_every=21)
 
 
 @pytest.fixture(scope="module")
@@ -52,6 +53,26 @@ def test_target_weights_respect_trend_filter():
     w = bt.target_weights(scores, trend_ok, CFG)
     assert w["AAA"] == 0.5 and w["BBB"] == 0 and w["CASH"] == 0.5
     assert w.sum() == pytest.approx(1.0)
+
+
+def test_leverage_scales_slots_and_borrows_only_when_needed():
+    lev = Config(**{**CFG.__dict__, "leverage": 2.0})
+    scores = pd.Series({"AAA": 0.9, "BBB": 0.8, "CCC": 0.1})
+    one_up = bt.target_weights(scores, pd.Series({"AAA": True, "BBB": False}), lev)
+    assert one_up["AAA"] == 1.0 and one_up["CASH"] == 0.0          # fully invested, no loan
+    both_up = bt.target_weights(scores, pd.Series({"AAA": True, "BBB": True}), lev)
+    assert both_up["AAA"] == 1.0 and both_up["BBB"] == 1.0 and both_up["CASH"] == -1.0
+
+
+def test_margin_loan_costs_interest(prices):
+    flat = prices.copy()
+    flat[:] = 100.0                                                 # nothing moves
+    day = flat.index[10]
+    targets = pd.DataFrame(0.0, index=[day], columns=list(CFG.tickers))
+    targets.loc[day, ["AAA", "CASH"]] = [2.0, -1.0]                 # borrow 100% of the account
+    cfg = Config(**{**CFG.__dict__, "cost_bps": 0.0, "margin_spread": 0.0504})
+    result = bt.simulate(flat, targets, cfg)
+    assert result["ret"].iloc[0] == pytest.approx(-0.0504 / 252, rel=1e-3)
 
 
 def test_simulation_trades_one_day_after_signal_and_charges_costs(prices):
