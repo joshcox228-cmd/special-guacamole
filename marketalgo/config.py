@@ -31,17 +31,23 @@ class Config:
     leverage: float = 2.0        # each slot is leverage / top_n of the account; above 1.0
                                  # the account borrows once enough picks are in uptrends
     margin_spread: float = 0.04  # yearly margin interest above the T-bill rate
-    core: str = "SPY"            # S&P 500 fund for the core half
-    core_weight: float = 0.5     # share of the account in the core; the fund rule runs the rest
-    core_mode: str = "managed"   # "managed": S&P exposure follows volatility (managed.py);
-                                 # "plain": the core fund is simply held
+    # Sleeves managed by volatility: (1x fund, 2x fund, share of the account). See managed.py.
+    # Whatever is left over is run by the fund rule.
+    managed: tuple = (("SPY", "SSO", 1 / 3), ("QQQ", "QLD", 1 / 3))
     review_anchor: str = "2026-12-11"   # the fund rule is reviewed on this date and every 14 days after
+    core: str = "SPY"            # used only for the plain "hold the S&P 500" comparisons
+    core_weight: float = 0.0     # share of the account simply held in `core` (0 = not used)
 
     min_train_days: int = 756    # need ~3 years of history before the first prediction
     sample_every: int = 5        # train on weekly snapshots (daily ones overlap heavily)
     exec_lag: int = 1            # signal at today's close, trade at tomorrow's close
     cost_bps: float = 5.0        # cost per dollar traded, in basis points
     seed: int = 7
+
+    @property
+    def rule_weight(self) -> float:
+        """Share of the account run by the fund rule."""
+        return 1.0 - sum(share for _, _, share in self.managed)
 
     @property
     def tickers(self) -> tuple:

@@ -7,7 +7,9 @@ from marketalgo import plan
 from marketalgo.config import Config
 from marketalgo.managed import ManagedConfig
 
-CFG, MCFG = Config(), ManagedConfig()
+CFG = Config(managed=(("SPY", "SSO", 0.5),))          # one sleeve: half the account in managed S&P
+MCFG = ManagedConfig()
+THREE = Config()                                       # default: S&P third, Nasdaq third, fund rule third
 
 
 def rule(**w):
@@ -20,7 +22,7 @@ def rule(**w):
 
 def test_weights_add_up_and_cash_from_one_half_offsets_the_other():
     # fund rule wants two funds at 40% each of its own half; S&P half wants 0.6x
-    w = plan.account_weights(rule(XLE=0.4, XLB=0.4), 0.6, CFG, MCFG)
+    w = plan.account_weights(rule(XLE=0.4, XLB=0.4), {"SPY": 0.6}, CFG)
     assert w.sum() == pytest.approx(1.0)
     assert w["XLE"] == pytest.approx(0.2) and w["SPY"] == pytest.approx(0.3)
     assert w[CFG.cash] == pytest.approx(0.1 + 0.2)                  # 10% from the rule + 20% from the S&P half
@@ -28,13 +30,13 @@ def test_weights_add_up_and_cash_from_one_half_offsets_the_other():
 
 
 def test_exposure_above_one_goes_through_the_2x_fund_without_a_loan():
-    w = plan.account_weights(rule(XLE=0.4), 1.5, CFG, MCFG)
+    w = plan.account_weights(rule(XLE=0.4), {"SPY": 1.5}, CFG)
     assert w["SPY"] == pytest.approx(0.25) and w["SSO"] == pytest.approx(0.25)
     assert w[CFG.cash] == pytest.approx(0.3)                         # the S&P half is fully used; no borrowing
 
 
 def test_rule_borrowing_shows_as_negative_cash():
-    w = plan.account_weights(rule(XLE=0.4, XLB=0.4, XLK=0.4, XLV=0.4, QQQ=0.4), 2.0, CFG, MCFG)
+    w = plan.account_weights(rule(XLE=0.4, XLB=0.4, XLK=0.4, XLV=0.4, QQQ=0.4), {"SPY": 2.0}, CFG)
     assert w.sum() == pytest.approx(1.0)
     assert w[CFG.cash] == pytest.approx(-0.5) and w["SSO"] == pytest.approx(0.5)
 
@@ -73,7 +75,20 @@ def test_frozen_positions_are_left_alone():
     assert o.loc["XLE", "trade"] == 0 and o.loc["SPY", "trade"] == -6
 
 
-def test_exposure_held_counts_the_2x_fund_twice():
+def test_exposure_held_counts_the_2x_fund_twice_and_ignores_the_rules_share():
     prices = pd.Series({"SPY": 700.0, "SSO": 60.0})
-    e = plan.core_exposure_held({"SPY": 5, "SSO": 50}, prices, 20_000, CFG, MCFG)
+    e = plan.exposure_held({"SPY": 5, "SSO": 50}, prices, 20_000, MCFG, 0.5)
     assert e == pytest.approx((5 * 700 + 2 * 50 * 60) / 10_000)
+    e2 = plan.exposure_held({"SPY": 5, "SSO": 0}, prices, 20_000, MCFG, 0.5, rule_weight_in_index=0.05)
+    assert e2 == pytest.approx((5 * 700 - 1_000) / 10_000)
+
+
+def test_three_way_split_adds_up():
+    w = plan.account_weights(rule(XLE=0.4, XLB=0.4), {"SPY": 0.63, "QQQ": 0.5}, THREE)
+    assert w.sum() == pytest.approx(1.0)
+    assert w["SPY"] == pytest.approx(0.63 / 3) and w["QQQ"] == pytest.approx(0.5 / 3)
+    assert w["XLE"] == pytest.approx(0.4 / 3) and w["SSO"] == 0 and w["QLD"] == 0
+    assert THREE.rule_weight == pytest.approx(1 / 3)
+    calm = plan.account_weights(rule(XLE=0.4, XLB=0.4, QQQ=0.4), {"SPY": 2.0, "QQQ": 1.5}, THREE)
+    assert calm["SSO"] == pytest.approx(1 / 3) and calm["QLD"] == pytest.approx(0.5 / 3)
+    assert calm["QQQ"] == pytest.approx(0.5 / 3 + 0.4 / 3)            # the sleeve's QQQ plus the rule's QQQ slot

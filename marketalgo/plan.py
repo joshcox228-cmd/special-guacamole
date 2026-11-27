@@ -15,18 +15,25 @@ from .config import Config
 from .managed import ManagedConfig, split
 
 
-def account_weights(rule_weights: pd.Series, exposure: float, cfg: Config, mcfg: ManagedConfig) -> pd.Series:
+def sleeves(cfg: Config) -> list[tuple[ManagedConfig, float]]:
+    """The volatility-managed sleeves as (settings, share of the account)."""
+    return [(ManagedConfig(index=index, fund2x=fund2x), share) for index, fund2x, share in cfg.managed]
+
+
+def account_weights(rule_weights: pd.Series, exposures: dict[str, float], cfg: Config) -> pd.Series:
     """Whole-account weights. `rule_weights` are the fund rule's weights as if it ran the
-    whole account (they sum to 1; a negative cash weight is a margin loan). `exposure` is
-    the managed S&P exposure, between 0 and 2. Cash from one half offsets borrowing in the other."""
-    w = rule_weights * (1 - cfg.core_weight)
-    for ticker in (mcfg.index, mcfg.fund2x, cfg.cash):
-        if ticker not in w.index:
-            w[ticker] = 0.0
-    parts = split(exposure)
-    w[mcfg.index] += cfg.core_weight * parts["index"]
-    w[mcfg.fund2x] += cfg.core_weight * parts["fund2x"]
-    w[cfg.cash] += cfg.core_weight * parts["cash"]
+    whole account (they sum to 1; a negative cash weight is a margin loan). `exposures`
+    maps each managed sleeve's 1x fund to its exposure, between 0 and 2. Cash left idle in
+    one sleeve offsets borrowing by the fund rule."""
+    w = (rule_weights * cfg.rule_weight).copy()
+    for mcfg, share in sleeves(cfg):
+        for ticker in (mcfg.index, mcfg.fund2x, cfg.cash):
+            if ticker not in w.index:
+                w[ticker] = 0.0
+        parts = split(exposures[mcfg.index])
+        w[mcfg.index] += share * parts["index"]
+        w[mcfg.fund2x] += share * parts["fund2x"]
+        w[cfg.cash] += share * parts["cash"]
     return w
 
 
@@ -68,8 +75,10 @@ def review_due(today: pd.Timestamp, previous_day: pd.Timestamp, anchor: pd.Times
     return previous_day < latest <= today
 
 
-def core_exposure_held(holdings: dict[str, float], prices: pd.Series, value: float, cfg: Config,
-                       mcfg: ManagedConfig) -> float:
-    """The S&P exposure the account actually carries, as a multiple of the core half."""
-    dollars = holdings.get(mcfg.index, 0.0) * prices[mcfg.index] + 2 * holdings.get(mcfg.fund2x, 0.0) * prices[mcfg.fund2x]
-    return float(dollars / (cfg.core_weight * value))
+def exposure_held(holdings: dict[str, float], prices: pd.Series, value: float, mcfg: ManagedConfig,
+                  share: float, rule_weight_in_index: float = 0.0) -> float:
+    """The exposure a managed sleeve actually carries, as a multiple of its share of the
+    account. Any part of the 1x fund that belongs to the fund rule is taken out first."""
+    dollars = (holdings.get(mcfg.index, 0.0) * prices[mcfg.index] - rule_weight_in_index * value
+               + 2 * holdings.get(mcfg.fund2x, 0.0) * prices[mcfg.fund2x])
+    return float(dollars / (share * value))

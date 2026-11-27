@@ -1,44 +1,48 @@
-# Market strategy: managed S&P 500 exposure plus fund momentum
+# Market strategy: managed S&P 500 and Nasdaq exposure plus fund momentum
 
-The account is run in two halves.
+The account is run in three equal parts.
 
-**S&P 500 half, managed by volatility.** Hold more of the S&P 500 when the market is calm
-and less when it is wild:
+**Managed S&P 500 and managed Nasdaq-100 (one third each).** Hold more of the index when
+the market is calm and less when it is wild:
 
     exposure = 20% / (annualised volatility of the last 20 days), capped at 2x
 
-Exposure up to 1x is held in SPY; anything above 1x is held through the 2x fund SSO, so
-there is no margin loan. Changes smaller than 0.1x are ignored. A **dip boost** adds 0.5x
-for a few days after a sharp drop while the S&P 500 is above its 200-day average.
+Exposure up to 1x is held in the plain fund (SPY, QQQ); anything above 1x is held through
+the matching 2x fund (SSO, QLD), so there is no margin loan. Changes smaller than 0.1x are
+ignored. A **dip boost** adds 0.5x for a few days after a sharp drop while the index is
+above its 200-day average.
 
-**Fund-rule half, reviewed every two weeks.**
+**Fund rule (one third), reviewed every two weeks.**
 
 1. Rank 22 liquid ETFs by their return from 12 months ago to 1 month ago.
-2. Take the top 5. Each one that is above its 200-day average gets 20% of the account.
+2. Take the top 5. Each one that is above its 200-day average gets a slot (13.3% of the account).
 3. A pick below its 200-day average gets nothing; spare money stays in cash.
-4. With three or more picks this half borrows on margin (2x on its own share).
+4. With three or more picks this part borrows on margin (2x on its own share).
 
 ## Backtest, 2003-01 to 2026-11
 
 After trading costs, margin interest of 4% a year above T-bills on the fund rule, and the
-measured cost of the 2x fund (about 1.8% above T-bills) on the S&P half. Averaged over
-several starting days. Return per year, by period:
+measured cost of the 2x funds (about 1.8% above T-bills) on the managed parts. Averaged
+over several starting days. Return per year, by period:
 
 | Portfolio | 2003-2014 | 2015-2026 | Whole period | Worst drawdown |
 |---|---|---|---|---|
-| Managed S&P + fund rule (this portfolio) | 16.6% | 11.6% | 14.1% | -31% |
-| Plain S&P + fund rule (previous version) | 14.9% | 10.6% | 12.8% | -38% |
+| Managed S&P + managed Nasdaq + fund rule (this portfolio) | 17.0% | 14.4% | 15.7% | -34% |
+| Managed S&P + fund rule, halves (previous version) | 16.6% | 11.6% | 14.1% | -31% |
+| Plain S&P + fund rule, halves | 14.9% | 10.6% | 12.8% | -38% |
 | Managed S&P only | 13.8% | 15.2% | 14.5% | -46% |
-| Fund rule only, 2x | 18.3% | 7.6% | 12.8% | -37% |
+| Managed Nasdaq only | 17.2% | 19.4% | 18.3% | -40% |
 | SPY buy & hold | 9.9% | 12.9% | 11.4% | -55% |
 
 What this shows, and what it does not:
 
-- Managing the S&P half improved on simply holding SPY in every window tested, including
-  the S&P 500 index back to 1960 (about one point a year more, similar worst drop).
+- Managing exposure improved on simply holding the index in every window tested,
+  including the S&P 500 back to 1960 (about one point a year more, similar worst drop).
+- **The Nasdaq third is a bet that large technology companies keep leading.** They have
+  for twenty years. In 2000-2002 the Nasdaq-100 lost 41% a year; the managed version lost
+  19% a year, which is far better and still a deep loss.
 - The fund rule's edge came from 2003-2014. Since 2015 it has trailed SPY. It is kept as
-  a second engine that behaved very differently in 2008, not because it has beaten the
-  market recently.
+  a different kind of engine that behaved very differently in 2008.
 - A dozen stock-picking and short-term trading ideas were tested and none beat SPY since
   2015 once delisted companies were included. See `research/swing/README.md`.
 - These are historical results chosen after testing many alternatives, so expect less.
@@ -47,9 +51,10 @@ What this shows, and what it does not:
 ## Use
 
     pip install -r requirements.txt
-    python run.py signals                                   # targets for both halves
-    python run.py signals --holdings "SPY:8,XLE:61,XLB:73" --cash 3700 --side "QQQ:3"
+    python run.py signals                                   # targets for all three parts
+    python run.py signals --holdings "SPY:5,QQQ:4,XLE:41,XLB:48" --cash 7800
                                                             # exact trades from what you hold
+    python run.py signals --holdings "..." --cash N --rebalance   # line everything up with the targets
     python run.py backtest                                  # full history, chart and tables in outputs/
     python run.py backtest --ml                             # add the ML model for comparison
     python run.py portfolio                                 # check holdings against written sell rules
@@ -76,11 +81,11 @@ It only reports. It never places trades, and thesis-break triggers are not check
 
 ## How it works
 
-- `marketalgo/managed.py`: the S&P 500 half (volatility-managed exposure and dip boost).
+- `marketalgo/managed.py`: the managed sleeves (volatility-managed exposure and dip boost).
 - `marketalgo/features.py`, `marketalgo/backtest.py`: the fund rule and its simulator.
-- `marketalgo/plan.py`: combines both halves into whole-account targets and orders. The
-  S&P half is adjusted on any day its exposure is off by more than 0.1x; fund positions
-  only change on review days.
+- `marketalgo/plan.py`: combines the parts into whole-account targets and orders. A
+  managed sleeve is adjusted on any day its exposure is off by more than 0.1x; fund
+  positions only change on review days.
 - `marketalgo/model.py`: the ML model that was tested first and lost to the fund rule.
 - `research/swing/`: the stock and swing-trading research behind the current design.
 
