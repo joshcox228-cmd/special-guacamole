@@ -33,7 +33,11 @@ class Config:
     margin_spread: float = 0.04  # yearly margin interest above the T-bill rate
     # Sleeves managed by volatility: (1x fund, 2x fund, share of the account). See managed.py.
     # Whatever is left over is run by the fund rule.
-    managed: tuple = (("SPY", "SSO", 1 / 3), ("QQQ", "QLD", 1 / 3))
+    managed: tuple = (("SPY", "SSO", 0.30), ("QQQ", "QLD", 0.30))
+    # Slices that are simply held: (fund to hold, price history used for backtests, share of the account).
+    # Bought back to target only when they drift more than `fixed_band` (a quarter) away from it.
+    fixed: tuple = (("IBIT", "BTC-USD", 0.10),)
+    fixed_band: float = 0.25
     review_anchor: str = "2026-12-11"   # the fund rule is reviewed on this date and every 14 days after
     core: str = "SPY"            # used only for the plain "hold the S&P 500" comparisons
     core_weight: float = 0.0     # share of the account simply held in `core` (0 = not used)
@@ -47,7 +51,7 @@ class Config:
     @property
     def rule_weight(self) -> float:
         """Share of the account run by the fund rule."""
-        return 1.0 - sum(share for _, _, share in self.managed)
+        return 1.0 - sum(share for _, _, share in self.managed) - sum(share for _, _, share in self.fixed)
 
     @property
     def tickers(self) -> tuple:

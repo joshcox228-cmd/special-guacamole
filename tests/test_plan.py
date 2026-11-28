@@ -7,9 +7,9 @@ from marketalgo import plan
 from marketalgo.config import Config
 from marketalgo.managed import ManagedConfig
 
-CFG = Config(managed=(("SPY", "SSO", 0.5),))          # one sleeve: half the account in managed S&P
+CFG = Config(managed=(("SPY", "SSO", 0.5),), fixed=())   # one sleeve: half the account in managed S&P
 MCFG = ManagedConfig()
-THREE = Config()                                       # default: S&P third, Nasdaq third, fund rule third
+THREE = Config(managed=(("SPY", "SSO", 1 / 3), ("QQQ", "QLD", 1 / 3)), fixed=())   # S&P, Nasdaq, fund rule in thirds
 
 
 def rule(**w):
@@ -41,7 +41,7 @@ def test_rule_borrowing_shows_as_negative_cash():
     assert w[CFG.cash] == pytest.approx(-0.5) and w["SSO"] == pytest.approx(0.5)
 
 
-def test_orders_round_down_and_skip_tiny_changes():
+def test_orders_round_to_the_nearest_share_and_skip_tiny_changes():
     w = pd.Series({"SPY": 0.315, "XLE": 0.20, "SHY": 0.485})
     prices = pd.Series({"SPY": 726.0, "XLE": 62.0, "SHY": 81.6})
     o = plan.orders(w, prices, 18_975, {"SPY": 13, "XLE": 61})
@@ -72,7 +72,7 @@ def test_frozen_positions_are_left_alone():
     w = pd.Series({"SPY": 0.30, "XLE": 0.10, "SHY": 0.60})
     prices = pd.Series({"SPY": 700.0, "XLE": 60.0})
     o = plan.orders(w, prices, 20_000, {"SPY": 14, "XLE": 61}, frozen={"XLE"})
-    assert o.loc["XLE", "trade"] == 0 and o.loc["SPY", "trade"] == -6
+    assert o.loc["XLE", "trade"] == 0 and o.loc["SPY", "trade"] == -5        # 8.57 shares rounds to 9
 
 
 def test_exposure_held_counts_the_2x_fund_twice_and_ignores_the_rules_share():
@@ -92,3 +92,18 @@ def test_three_way_split_adds_up():
     calm = plan.account_weights(rule(XLE=0.4, XLB=0.4, QQQ=0.4), {"SPY": 2.0, "QQQ": 1.5}, THREE)
     assert calm["SSO"] == pytest.approx(1 / 3) and calm["QLD"] == pytest.approx(0.5 / 3)
     assert calm["QQQ"] == pytest.approx(0.5 / 3 + 0.4 / 3)            # the sleeve's QQQ plus the rule's QQQ slot
+
+
+def test_rounding_never_spends_more_cash_than_the_plan_allows():
+    w = pd.Series({"AAA": 0.5, "BBB": 0.5, "SHY": 0.0})
+    prices = pd.Series({"AAA": 600.0, "BBB": 600.0})
+    o = plan.orders(w, prices, 1_900)                                 # 1.58 shares each would round up to 2 + 2 = 2,400
+    assert (o["target"] * o["price"]).sum() <= 1_900
+
+
+def test_default_plan_has_a_held_bitcoin_slice():
+    cfg = Config()
+    w = plan.account_weights(rule(XLE=0.4, XLB=0.4), {"SPY": 0.63, "QQQ": 0.5}, cfg)
+    assert w.sum() == pytest.approx(1.0)
+    assert w["IBIT"] == pytest.approx(0.10) and cfg.rule_weight == pytest.approx(0.30)
+    assert w["SPY"] == pytest.approx(0.30 * 0.63) and w["XLE"] == pytest.approx(0.30 * 0.4)

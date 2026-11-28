@@ -1,9 +1,9 @@
-# Market strategy: managed S&P 500 and Nasdaq exposure plus fund momentum
+# Market strategy: managed S&P 500 and Nasdaq exposure, fund momentum, and a Bitcoin slice
 
-The account is run in three equal parts.
+The account is run in four parts.
 
-**Managed S&P 500 and managed Nasdaq-100 (one third each).** Hold more of the index when
-the market is calm and less when it is wild:
+**Managed S&P 500 and managed Nasdaq-100 (30% each).** Hold more of the index when the
+market is calm and less when it is wild:
 
     exposure = 20% / (annualised volatility of the last 20 days), capped at 2x
 
@@ -12,47 +12,64 @@ the matching 2x fund (SSO, QLD), so there is no margin loan. Changes smaller tha
 ignored. A **dip boost** adds 0.5x for a few days after a sharp drop while the index is
 above its 200-day average.
 
-**Fund rule (one third), reviewed every two weeks.**
+**Fund rule (30%), reviewed every two weeks.**
 
 1. Rank 22 liquid ETFs by their return from 12 months ago to 1 month ago.
-2. Take the top 5. Each one that is above its 200-day average gets a slot (13.3% of the account).
+2. Take the top 5. Each one that is above its 200-day average gets a slot (12% of the account).
 3. A pick below its 200-day average gets nothing; spare money stays in cash.
 4. With three or more picks this part borrows on margin (2x on its own share).
 
-## Backtest, 2003-01 to 2026-11
+**Bitcoin (10%), simply held** through a spot Bitcoin fund (IBIT). It is topped up or
+trimmed only when it drifts more than a quarter away from 10%. This slice is a speculative
+choice by the account owner, not something the research found an edge in.
+
+## Backtest
 
 After trading costs, margin interest of 4% a year above T-bills on the fund rule, and the
-measured cost of the 2x funds (about 1.8% above T-bills) on the managed parts. Averaged
-over several starting days. Return per year, by period:
+measured cost of the 2x funds (about 1.8% above T-bills) on the managed parts.
+
+The three tested parts, 2003-01 to 2026-11, averaged over several starting days:
 
 | Portfolio | 2003-2014 | 2015-2026 | Whole period | Worst drawdown |
 |---|---|---|---|---|
-| Managed S&P + managed Nasdaq + fund rule (this portfolio) | 17.0% | 14.4% | 15.7% | -34% |
-| Managed S&P + fund rule, halves (previous version) | 16.6% | 11.6% | 14.1% | -31% |
-| Plain S&P + fund rule, halves | 14.9% | 10.6% | 12.8% | -38% |
+| Managed S&P + managed Nasdaq + fund rule, in thirds | 17.0% | 14.4% | 15.7% | -34% |
+| Managed S&P + fund rule, halves (earlier version) | 16.6% | 11.6% | 14.1% | -31% |
 | Managed S&P only | 13.8% | 15.2% | 14.5% | -46% |
 | Managed Nasdaq only | 17.2% | 19.4% | 18.3% | -40% |
 | SPY buy & hold | 9.9% | 12.9% | 11.4% | -55% |
+
+With the Bitcoin slice, since 2021 only (the period after large institutions arrived):
+
+| Portfolio | A year since 2021 | Worst drawdown |
+|---|---|---|
+| Current plan, 10% Bitcoin | 18.1% | -27% |
+| Same plan without Bitcoin | 17.2% | -23% |
+| Bitcoin, simply held | 13.3% | -77% |
+| SPY buy & hold | 13.7% | -24% |
 
 What this shows, and what it does not:
 
 - Managing exposure improved on simply holding the index in every window tested,
   including the S&P 500 back to 1960 (about one point a year more, similar worst drop).
-- **The Nasdaq third is a bet that large technology companies keep leading.** They have
-  for twenty years. In 2000-2002 the Nasdaq-100 lost 41% a year; the managed version lost
-  19% a year, which is far better and still a deep loss.
+- **The Nasdaq part is a bet that large technology companies keep leading.** In 2000-2002
+  the Nasdaq-100 lost 41% a year; the managed version lost 19% a year.
+- **The Bitcoin slice has no cash flows behind it.** Since 2021 Bitcoin returned about what
+  the S&P 500 did, with drawdowns three times as deep. `run.py backtest` reports a much
+  higher long-run figure for the current plan because Bitcoin rose about 100-fold from
+  2015 to 2020; that will not repeat and should be ignored.
 - The fund rule's edge came from 2003-2014. Since 2015 it has trailed SPY. It is kept as
   a different kind of engine that behaved very differently in 2008.
-- A dozen stock-picking and short-term trading ideas were tested and none beat SPY since
-  2015 once delisted companies were included. See `research/swing/README.md`.
+- About fifteen stock-picking and short-term trading ideas were tested, in large and
+  small companies, and none beat SPY once delisted companies were included. See
+  `research/swing/README.md`.
 - These are historical results chosen after testing many alternatives, so expect less.
   Taxes are not included, and frequent adjustments create short-term gains.
 
 ## Use
 
     pip install -r requirements.txt
-    python run.py signals                                   # targets for all three parts
-    python run.py signals --holdings "SPY:5,QQQ:4,XLE:41,XLB:48" --cash 7800
+    python run.py signals                                   # targets for every part
+    python run.py signals --holdings "SPY:5,QQQ:4,XLE:37,XLB:44,IBIT:56" --cash 6300
                                                             # exact trades from what you hold
     python run.py signals --holdings "..." --cash N --rebalance   # line everything up with the targets
     python run.py backtest                                  # full history, chart and tables in outputs/

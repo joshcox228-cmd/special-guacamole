@@ -11,7 +11,7 @@ PCT = {"CAGR", "Volatility", "Max drawdown", "Worst month", "Winning months", "T
 # Fixed colour per strategy so a line keeps its colour in every panel.
 COLORS = {
     "ML top-5": "#257de0",
-    "Managed S&P + Nasdaq + fund rule": "#f47230",
+    "Current plan": "#f47230",
     "Equal weight (all ETFs)": "#00b894",
     "SPY buy & hold": "#f2a600",
 }

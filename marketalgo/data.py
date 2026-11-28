@@ -93,3 +93,17 @@ def load_bill_rate(refresh: bool = False) -> pd.Series:
     BILL_CACHE.parent.mkdir(parents=True, exist_ok=True)
     rate.to_frame("rate").to_parquet(BILL_CACHE)
     return rate
+
+
+def load_coin(symbol: str, trading_days: pd.DatetimeIndex, refresh: bool = False) -> pd.Series:
+    """A coin's price at each stock-market close. Yahoo stamps a coin's day at midnight UTC, which
+    reads as the evening before in New York, so the dates are moved forward one day first."""
+    path = CACHE.parent / f"coin_{symbol}.parquet"
+    if path.exists() and not refresh:
+        raw = pd.read_parquet(path)["close"]
+    else:
+        raw = fetch_history(symbol, "2014-01-01")["close"]
+        raw.index = raw.index + pd.Timedelta(days=1)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw.to_frame("close").to_parquet(path)
+    return raw.reindex(raw.index.union(trading_days)).ffill().reindex(trading_days)

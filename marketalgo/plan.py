@@ -34,6 +34,8 @@ def account_weights(rule_weights: pd.Series, exposures: dict[str, float], cfg: C
         w[mcfg.index] += share * parts["index"]
         w[mcfg.fund2x] += share * parts["fund2x"]
         w[cfg.cash] += share * parts["cash"]
+    for fund, _, share in cfg.fixed:                    # slices that are simply held
+        w[fund] = w.get(fund, 0.0) + share
     return w
 
 
@@ -41,7 +43,7 @@ def orders(weights: pd.Series, prices: pd.Series, value: float, holdings: dict[s
            cash_ticker: str = "SHY", min_trade: float = 0.02, frozen: set[str] | None = None) -> pd.DataFrame:
     """Target share counts for an account worth `value` and the trades to get there.
 
-    Whole shares, rounded down. Spare money is left as cash (the cash fund is not bought).
+    Whole shares, rounded to the nearest. Spare money is left as cash (the cash fund is not bought).
     When holdings are given, a difference worth less than `min_trade` of the account is
     left alone, so small drifts do not turn into pointless trades. Tickers in `frozen`
     are not traded at all today (for example fund-rule positions between reviews)."""
@@ -49,11 +51,21 @@ def orders(weights: pd.Series, prices: pd.Series, value: float, holdings: dict[s
     frozen = frozen or set()
     tickers = [t for t in weights.index if t != cash_ticker and (weights[t] > 0 or t in holdings)]
     tickers += [t for t in holdings if t not in tickers and t != cash_ticker]
+    # Nearest whole share (rounding down every time would leave the account under-invested),
+    # then give back shares if rounding alone would push the account into borrowing.
+    exact = {t: value * float(weights.get(t, 0.0)) / float(prices[t]) for t in tickers}
+    shares = {t: math.floor(x + 0.5) for t, x in exact.items()}
+    budget = value * (1.0 - min(float(weights.get(cash_ticker, 0.0)), 0.0))   # rounding may use spare cash, never a loan
+    while sum(shares[t] * float(prices[t]) for t in tickers) > budget + 1e-9:
+        over = max((t for t in tickers if shares[t] > 0), key=lambda t: (shares[t] - exact[t]) * float(prices[t]), default=None)
+        if over is None or shares[over] <= exact[over]:
+            break
+        shares[over] -= 1
     rows = []
     for t in tickers:
         w = float(weights.get(t, 0.0))
         price = float(prices[t])
-        target = math.floor(value * w / price + 1e-9)
+        target = shares[t]
         held = float(holdings.get(t, 0.0))
         trade = target - held
         if t in frozen:
