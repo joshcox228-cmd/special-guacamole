@@ -42,10 +42,10 @@ With the Bitcoin slice, since 2021 only (the period after large institutions arr
 
 | Portfolio | A year since 2021 | Worst drawdown |
 |---|---|---|
-| Current plan, 10% Bitcoin | 18.1% | -27% |
-| Same plan without Bitcoin | 17.2% | -23% |
+| Current plan, 10% Bitcoin | 17.9% | -27% |
+| Same plan without Bitcoin | 16.8% | -23% |
 | Bitcoin, simply held | 13.3% | -77% |
-| SPY buy & hold | 13.7% | -24% |
+| SPY buy & hold | 13.5% | -24% |
 
 What this shows, and what it does not:
 
